@@ -1,10 +1,11 @@
+use std::env;
 use std::sync::atomic::Ordering;
-use vm::{VirtualMachine, Configuration};
+use rscvm::{VirtualMachine, Configuration};
 
 fn parse_args() -> Configuration {
     let mut config = Configuration::default();
     
-    for arg in std::env::args().into_iter() {
+    for arg in env::args().into_iter() {
         let mut name_val = arg.split("=");
         let name = name_val.next().unwrap_or("");
         let val = name_val.last().unwrap_or("");

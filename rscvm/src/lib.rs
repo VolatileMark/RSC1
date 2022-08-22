@@ -338,8 +338,8 @@ impl VirtualMachine {
                         self.regs.r[x as usize] = (value_hi << 8) | value_lo;
                     }
                     Instruction::STA => {
-                        let x = (opcode & 0x0F00) >> 8;
-                        let y = (opcode & 0x00F0) >> 4;
+                        let y = (opcode & 0x0F00) >> 8;
+                        let x = (opcode & 0x00F0) >> 4;
                         if x >= 0x08 || y >= 0x08 {
                             return Err(Exception::IOP);
                         }
