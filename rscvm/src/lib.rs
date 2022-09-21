@@ -3,32 +3,43 @@ use std::io::ErrorKind;
 use std::time::Instant;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use num_traits::FromPrimitive;
-use num_derive::FromPrimitive;
+use num_traits::ToPrimitive;
+use num_derive::ToPrimitive;
 
 enum Exception {
     IOP,
     SEG,
+    UNA,
 }
 
-#[derive(FromPrimitive)]
 enum Instruction {
-    HLT = 0x0,
-    CALL = 0x1,
-    RET = 0x2,
-    JMP = 0x3,
-    JNZ = 0x4,
-    MOV = 0x5,
-    LDI = 0x6,
-    LDA = 0x7,
-    STA = 0x8,
-    PUSH = 0x9,
-    POP = 0xA,
-    AND = 0xB,
-    NOT = 0xC,
-    SHR = 0xD,
-    SHL = 0xE,
-    ADD = 0xF
+    NOP = 0x0000,
+    AND = 0x1000,
+    NOT = 0x1001,
+    ADD = 0x2000,
+    SUB = 0x2001,
+    INC = 0x2002,
+    DEC = 0x2003,
+    LDB = 0x3000,
+    LDW = 0x3001,
+    MOV = 0x3002,
+    LDI = 0x4000,
+    STB = 0x5000,
+    STW = 0x5001,
+    JMP = 0x6000,
+    JNZ = 0x6001,
+    SHR = 0x7000,
+    SHL = 0x7001,
+    TEST = 0x8000,
+    SETF = 0x8001,
+    CLRF = 0x8002,
+}
+
+#[derive(ToPrimitive)]
+enum RegisterId {
+    R7 = 0x07,
+    SP = 0x08,
+    C1 = 0x0A,
 }
 
 pub struct Configuration {
@@ -87,15 +98,21 @@ impl Firmware {
     pub fn default() -> Self {
         let default = vec![
             // Move 0xDEAD into r0
-            0x60, 0xDE,
-            0xE0, 0x08,
-            0x60, 0xAD,
+            0xDE, 0x40,
+            0x81, 0x70,
+            0xAD, 0x40,
             // Move 0xDEAD into r1
-            0x61, 0xDE,
-            0xE1, 0x08,
-            0x61, 0xAD,
-            // Halt
-            0x00, 0x00
+            0xBE, 0x41,
+            0x81, 0x71,
+            0xEF, 0x41,
+            // Load no-op address
+            0x00, 0x42,
+            0x81, 0x72,
+            0x12, 0x42,
+            // No-op
+            0x00, 0x00,
+            // Jump to no-op
+            0x00, 0x62
         ];
         return Self {
             size: default.len() as u16,
@@ -125,7 +142,7 @@ impl Memory {
     }
 }
 
-struct Registers {
+struct Register {
     r: [u16; 8],
     c: [u16; 2],
     sp: u16,
@@ -133,7 +150,7 @@ struct Registers {
     pc: u16
 }
 
-impl Registers {
+impl Register {
     pub fn new() -> Self {
         return Self {
             r: [0; 8],
@@ -143,22 +160,13 @@ impl Registers {
             pc: 0
         }
     }
-
-    pub fn num_to_ptr(&mut self, num: u8) -> Option<&mut u16> {
-        return match num {
-            0x0A => Some(&mut self.sp),
-            0x08 | 0x09 => Some(&mut self.c[(num - 0x08) as usize]),
-            0x01..=0x07 => Some(&mut self.r[num as usize]),
-            _ => None
-        }
-    }
 }
 
 pub struct VirtualMachine {
     config: Configuration,
     firmware: Firmware,
     mem: Memory,
-    regs: Registers,
+    regs: Register,
     pub should_run: Arc<AtomicBool>
 }
 
@@ -170,7 +178,7 @@ impl VirtualMachine {
             Firmware::from_file(&config.firmware_file)
         };
         let mem = Memory::new(config.memory_size);
-        let regs = Registers::new();
+        let regs = Register::new();
         return Self {
             config,
             firmware,
@@ -221,10 +229,10 @@ impl VirtualMachine {
 
     fn fetch(&self) -> u16 {
         if self.regs.pc > self.mem.size - 2 {
-            return 0;    
+            return 0;
         }
-        let opcode_hi = self.mem.data[self.regs.pc as usize] as u16;
-        let opcode_lo = self.mem.data[(self.regs.pc + 1) as usize] as u16;
+        let opcode_lo = self.mem.data[self.regs.pc as usize] as u16;
+        let opcode_hi = self.mem.data[(self.regs.pc + 1) as usize] as u16;
         return (opcode_hi << 8) | opcode_lo;
     }
 
@@ -233,229 +241,185 @@ impl VirtualMachine {
         if self.config.verbose {
             println!(" [PC={:0>4X}] Executing opcode ({:0>4X})", self.regs.pc, opcode);
         }
-        match FromPrimitive::from_u8(((opcode & 0xF000) >> 12) as u8) {
+        match decode_opcode(opcode) {
             Some(i) => {
+                let x = (opcode & 0x0F00) >> 8;
+                let y = (opcode & 0x00F0) >> 4;
+                let nn = opcode & 0x00FF;
                 match i {
-                    Instruction::HLT => { return Ok(0); }
-                    Instruction::CALL => {
-                        if (opcode & 0x00FF) != 0x00 {
-                            return Err(Exception::SEG);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        if x >= 0x08 {
-                            return Err(Exception::IOP);
-                        } else if self.regs.sp < 2 {
-                            return Err(Exception::SEG);
-                        }
-                        let tmp = self.regs.pc + 2;
-                        self.regs.pc += 2;
-                        self.mem.data[self.regs.pc as usize] = ((tmp & 0xFF00) >> 8) as u8;
-                        self.mem.data[(self.regs.pc + 1) as usize] = (tmp & 0x00FF) as u8;
-                        return Ok(0);
-                    }
-                    Instruction::RET => {
-                        if (opcode & 0x0FFF) != 0x00 {
-                            return Err(Exception::SEG);
-                        }
-                        if self.regs.sp > self.mem.size - 2 {
-                            return Err(Exception::SEG);
-                        }
-                        let pc_hi = (self.mem.data[self.regs.sp as usize] as u16) << 8;
-                        let pc_lo = self.mem.data[(self.regs.pc + 1) as usize] as u16;
-                        self.regs.pc = pc_hi | pc_lo;
-                        self.regs.sp += 2;
-                        return Ok(0);
-                    }
-                    Instruction::JMP => {
-                        if (opcode & 0x00FF) != 0x00 {
-                            return Err(Exception::SEG);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        if x >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        self.regs.pc = self.regs.r[x as usize];
-                        return Ok(0);
-                    }
-                    Instruction::JNZ => {
-                        if (opcode & 0x000F) != 0x00 {
-                            return Err(Exception::SEG);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        let y = (opcode & 0x00F0) >> 4;
-                        if x >= 0x08 || y >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        if self.regs.r[y as usize] != 0 {
-                            self.regs.pc = self.regs.r[x as usize];
-                            return Ok(0);
-                        }
-                    }
-                    Instruction::MOV => {
-                        if (opcode & 0x000F) != 0x00 {
-                            return Err(Exception::SEG);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        let y = (opcode & 0x00F0) >> 4;
-                        if x > 0x0A || y > 0x0A {
-                            return Err(Exception::IOP);
-                        }
-                        let ry = *self.regs.num_to_ptr(y as u8).unwrap();
-                        let rx = self.regs.num_to_ptr(x as u8).unwrap();
-                        *rx = ry;
-                    }
-                    Instruction::LDI => {
-                        let x = (opcode & 0x0F00) >> 8;
-                        if x >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        self.regs.r[x as usize] = (self.regs.r[x as usize] & 0xFF00) | (opcode & 0x00FF);
-                    }
-                    Instruction::LDA => {
-                        let x = (opcode & 0x0F00) >> 8;
-                        let y = (opcode & 0x00F0) >> 4;
-                        if x >= 0x08 || y >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        let addr = self.regs.r[y as usize];
-                        if addr > self.mem.size - 2 {
-                            return Err(Exception::SEG);
-                        }
-                        let value_lo;
-                        let value_hi;
-                        match opcode & 0x000F {
-                            0x0 => {
-                                value_hi = self.regs.r[x as usize] & 0xFF00;
-                                value_lo = self.mem.data[addr as usize] as u16;
-                                
-                            }
-                            0x1 => {
-                                value_hi = self.mem.data[addr as usize] as u16;
-                                value_lo = self.mem.data[(addr + 1) as usize] as u16;
-                            }
-                            _ => return Err(Exception::IOP)
-                        }
-                        self.regs.r[x as usize] = (value_hi << 8) | value_lo;
-                    }
-                    Instruction::STA => {
-                        let y = (opcode & 0x0F00) >> 8;
-                        let x = (opcode & 0x00F0) >> 4;
-                        if x >= 0x08 || y >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        let addr = self.regs.r[y as usize];
-                        if addr > self.mem.size - 2 {
-                            return Err(Exception::SEG);
-                        }
-                        match opcode & 0x000F {
-                            0x0 => self.mem.data[addr as usize] = (self.regs.r[x as usize] & 0x00FF) as u8,
-                            0x1 => {
-                                self.mem.data[addr as usize] = ((self.regs.r[x as usize] & 0xFF00) >> 8) as u8;
-                                self.mem.data[(addr + 1) as usize] = (self.regs.r[x as usize] & 0x00FF) as u8;
-                            }
-                            _ => return Err(Exception::IOP)
-                        }
-                    }
-                    Instruction::PUSH => {
-                        if self.regs.sp < 2 {
-                            return Err(Exception::SEG);
-                        }
-                        let value;
-                        match opcode & 0x00FF {
-                            0x00 => {
-                                let x = (opcode & 0x0F00) >> 8;
-                                if x > 0x0A {
-                                    return Err(Exception::IOP);
-                                }
-                                value = *self.regs.num_to_ptr(x as u8).unwrap();
-                            }
-                            0x01 => {
-                                if (opcode & 0x0FF0) != 0x00 {
-                                    return Err(Exception::IOP);
-                                }
-                                value = self.regs.fg;
-                            }
-                            _ => return Err(Exception::IOP)
-                        }
-                        self.regs.sp -= 2;
-                        self.mem.data[self.regs.sp as usize] = ((value & 0xFF00) >> 8) as u8;
-                        self.mem.data[(self.regs.sp + 1) as usize] = (value & 0x00FF) as u8;
-                    }
-                    Instruction::POP => {
-                        if self.regs.sp >= self.mem.size {
-                            return Err(Exception::SEG);
-                        }
-                        let value_hi = self.mem.data[self.regs.sp as usize] as u16;
-                        let value_lo = self.mem.data[(self.regs.sp + 1) as usize] as u16;
-                        let value = (value_hi << 8) | value_lo;
-                        match opcode & 0x00FF {
-                            0x00 => {
-                                let x = (opcode & 0x0F00) >> 8;
-                                if x > 0x0A {
-                                    return Err(Exception::IOP);
-                                }
-                                *self.regs.num_to_ptr(x as u8).unwrap() = value;
-                            }
-                            0x01 => {
-                                if (opcode & 0x0FF0) != 0x00 {
-                                    return Err(Exception::IOP);
-                                }
-                                self.regs.fg = value;
-                            }
-                            _ => return Err(Exception::IOP)
-                        }
-                        self.regs.sp += 2;
-                    }
+                    Instruction::NOP => {},
                     Instruction::AND => {
-                        if (opcode & 0x000F) != 0 {
-                            return Err(Exception::IOP);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        let y = (opcode & 0x00F0) >> 4;
-                        if x >= 0x08 || y >= 0x08 {
+                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] &= self.regs.r[y as usize];
-                    }
+                    },
                     Instruction::NOT => {
-                        if (opcode & 0x00FF) != 0 {
-                            return Err(Exception::IOP);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        if x >= 0x08 {
+                        if !check_register_range(x, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] = !self.regs.r[x as usize];
-                    }
-                    Instruction::SHR => {
-                        let x = (opcode & 0x0F00) >> 8;
-                        if x >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        self.regs.r[x as usize] >>= opcode & 0x00FF;
-                    }
-                    Instruction::SHL => {
-                        let x = (opcode & 0x0F00) >> 8;
-                        if x >= 0x08 {
-                            return Err(Exception::IOP);
-                        }
-                        self.regs.r[x as usize] <<= opcode & 0x00FF;
-                    }
+                    },
                     Instruction::ADD => {
-                        if (opcode & 0x000F) != 0 {
-                            return Err(Exception::IOP);
-                        }
-                        let x = (opcode & 0x0F00) >> 8;
-                        let y = (opcode & 0x00F0) >> 4;
-                        if x >= 0x08 || y >= 0x08 {
+                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] += self.regs.r[y as usize];
-                    }
+                    },
+                    Instruction::SUB => {
+                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] -= self.regs.r[y as usize];
+                    },
+                    Instruction::INC => {
+                        if !check_register_range(x, RegisterId::SP) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] += 1;
+                    },
+                    Instruction::DEC => {
+                        if !check_register_range(x, RegisterId::SP) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] -= 1;
+                    },
+                    Instruction::LDB => {
+                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::SP) {
+                            return Err(Exception::IOP);
+                        }
+                        let address = self.regs.r[y as usize];
+                        if address >= self.mem.size {
+                            return Err(Exception::SEG);
+                        }
+                        let xh = self.regs.r[x as usize] & 0xFF00;
+                        self.regs.r[x as usize] = xh | self.mem.data[address as usize] as u16;
+                    },
+                    Instruction::LDW => {
+                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::SP) {
+                            return Err(Exception::IOP);
+                        }
+                        let address = self.regs.r[y as usize];
+                        if address >= self.mem.size - 1 {
+                            return Err(Exception::SEG);
+                        }
+                        self.regs.r[x as usize] = ((self.mem.data[address as usize + 1] as u16) << 8) | (self.mem.data[address as usize] as u16);
+                    },
+                    Instruction::MOV => {
+                        if !check_register_range(x, RegisterId::C1) || !check_register_range(y, RegisterId::C1) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] = self.regs.r[y as usize];
+                    },
+                    Instruction::LDI => {
+                        if !check_register_range(x, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] = (self.regs.r[x as usize] & 0xFF00) | nn;
+                    },
+                    Instruction::STB => {
+                        if !check_register_range(x, RegisterId::SP) || !check_register_range(y, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        let address = self.regs.r[x as usize];
+                        if address >= self.mem.size {
+                            return Err(Exception::SEG);
+                        }
+                        self.mem.data[address as usize] = (self.regs.r[y as usize] & 0x00FF) as u8;
+                    },
+                    Instruction::STW => {
+                        if !check_register_range(x, RegisterId::SP) || !check_register_range(y, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        let address = self.regs.r[x as usize];
+                        if address >= self.mem.size - 1 {
+                            return Err(Exception::SEG);
+                        }
+                        self.mem.data[address as usize + 1] = (self.regs.r[y as usize] >> 8) as u8;
+                        self.mem.data[address as usize] = (self.regs.r[y as usize] & 0x00FF) as u8;
+                    },
+                    Instruction::JMP => {
+                        if !check_register_range(x, RegisterId::SP) {
+                            return Err(Exception::IOP);
+                        }
+                        let address = self.regs.r[x as usize];
+                        if address % 2 != 0 {
+                            return Err(Exception::UNA);
+                        }
+                        self.regs.pc = address;
+                    },
+                    Instruction::JNZ => {
+                        if !check_register_range(x, RegisterId::SP) || !check_register_range(y, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        let address = self.regs.r[x as usize];
+                        if address % 2 != 0 {
+                            return Err(Exception::UNA);
+                        }
+                        if self.regs.r[y as usize] == 0 {
+                            self.regs.pc = address;
+                        }
+                    },
+                    Instruction::SHR => {
+                        if !check_register_range(x, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] >>= y;
+                    },
+                    Instruction::SHL => {
+                        if !check_register_range(x, RegisterId::R7) {
+                            return Err(Exception::IOP);
+                        }
+                        self.regs.r[x as usize] <<= y;
+                    },
+                    Instruction::TEST => {
+                        if self.regs.fg & (1 << x) != 0 {
+                            self.regs.pc += 2;
+                        }
+                    },
+                    Instruction::SETF => {
+                        self.regs.fg |= 1 << x;
+                    },
+                    Instruction::CLRF => {
+                        self.regs.fg &= !(1 << x);
+                    },
                 }
             }
-            None => panic!("Failed to fetch next instruction")
+            None => panic!("Failed to fetch next instruction"),
         }
         return Ok(2);
+    }
+}
+
+fn check_register_range(reg: u16, ceil: RegisterId) -> bool {
+    match ceil.to_u16() {
+        Some(n) => return reg <= n,
+        None => return false
+    }
+}
+
+fn decode_opcode(opcode: u16) -> Option<Instruction> {
+    return match opcode & 0xF003 {
+        0x0000 => Some(Instruction::NOP),
+        0x1000 => Some(Instruction::AND),
+        0x1001 => Some(Instruction::NOT),
+        0x2000 => Some(Instruction::ADD),
+        0x2001 => Some(Instruction::SUB),
+        0x2002 => Some(Instruction::INC),
+        0x2003 => Some(Instruction::DEC),
+        0x3000 => Some(Instruction::LDB),
+        0x3001 => Some(Instruction::LDW),
+        0x3002 => Some(Instruction::MOV),
+        0x4000..=0x4003 => Some(Instruction::LDI),
+        0x5000 => Some(Instruction::STB),
+        0x5001 => Some(Instruction::STW),
+        0x6000 => Some(Instruction::JMP),
+        0x6001 => Some(Instruction::JNZ),
+        0x7000 => Some(Instruction::SHR),
+        0x7001 => Some(Instruction::SHL),
+        0x8000 => Some(Instruction::TEST),
+        0x8001 => Some(Instruction::SETF),
+        0x8002 => Some(Instruction::CLRF),
+        _ => None,
     }
 }

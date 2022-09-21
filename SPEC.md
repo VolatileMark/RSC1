@@ -2,37 +2,49 @@
 
 ## System properties
 
-The system stores values in the **big endian format**.
+The system stores values in the **little endian format**.
 
 | Registers | Width   | Usage              | Access |
 | --------- | ------- | ------------------ | ------ |
 | r0 - r7   | 16 bits | General purpose    | RW     |
-| c0 - c1   | 16 bits | Control registers  | RW     |
 | sp        | 16 bits | Stack pointer      | RW     |
+| c0 - c1   | 16 bits | Control registers  | RW     |
 | fg        | 16 bits | Flags register     | **     |
 | pc        | 16 bits | Program counter    | R-     |
 
-**NOTE**: `fg` can only be read and written to with the instructions `PUSHR` and `POPR`
+## Instructions
 
-| Instruction | Arguments | Description                                                     |
-| ----------- | --------- | --------------------------------------------------------------- |
-| AND         | rX, rY    | Bitwise and rX with rY                                          | 
-| NOT         | rX        | Bitwise not rX                                                  |
-| ADD         | rX, rY    | Add content of rY to rX                                         |
-| MOV         | rX, rY    | Copy the value of rY into rX                                    |
-| LDI         | rX, ##    | Load immediate 8-bit value ## into the lower 8-bits of rX       |
-| LDB (LDA)   | rX, rY    | Load byte from memory address (rY) into rX                      |
-| LDW (LDA)   | rX, rY    | Load word from memory address (rY) into rX                      |
-| STB (STA)   | rY, rX    | Store the value of rX into memory at address (rY)               |
-| STW (STA)   | rY, rX    | Store the value of rX into memory at address (rY)               |
-| JMP         | rX        | Start executing instructions from address (rX)                  |
-| JNZ         | rX, rY    | Jump to address (rX) only if rY is not zero                     |
-| PUSHR       | rX        | Decrement sp and store the value of rX at memory address (sp)   |
-| PUSHF       | --        | Decrement sp and store the value of fg at memory address (sp)   |
-| POPR        | rX        | Store the value at memory address (sp) into rX and increment sp |
-| POPF        | --        | Store the value at memory address (sp) into fg and increment sp |
-| SHR         | rX, ##    | Bit shift the value in rX to the right by ## (8-bit) bits       |
-| SHL         | rX, ##    | Bit shift the value in rX to the left by ## (8-bit) bits        |
-| CALL        | rX        | PUSHR the address of the next function and jump to rX           |
-| RET         | --        | POPR rX and JMP rX                                              |
-| HLT         | --        | Halt execution until the next interrupt fires                   |
+| Opcode | Instruction | Arguments | Valid Values | Description                                                     |
+| ------ | ----------- | --------- | ------------ | --------------------------------------------------------------- |
+| 0x0000 | NOP         | --, --    | --   , --    | Do nothing for 1 machine cycle                                  |
+| 0x1XY0 | AND         | X , Y     | r0-r7, r0-r7 | Bitwise and X with Y                                            |
+| 0x1X01 | NOT         | X , --    | r0-r7, --    | Bitwise not X                                                   |
+| 0x2XY0 | ADD         | X , Y     | r0-r7, r0-r7 | Add content of Y to X                                           |
+| 0x2XY1 | SUB         | X , Y     | r0-r7, r0-r7 | Subtract content of Y from X                                    |
+| 0x2X02 | INC         | X , --    | r0-sp, --    | Increment the value of X by 1                                   |
+| 0x2X03 | DEC         | X , --    | r0-sp, --    | Decrement the value of X by 1                                   |
+| 0x3XY0 | LDB         | X , Y     | r0-r7, r0-sp | Load byte from memory address (Y) into X                        |
+| 0x3XY1 | LDW         | X , Y     | r0-r7, r0-sp | Load word from memory address (Y) into X                        |
+| 0x3XY2 | MOV         | X , Y     | r0-c1, r0-c1 | Copy the value of Y into X                                      |
+| 0x4XNN | LDI         | X , NN    | r0-r7, 0-255 | Load immediate 8-bit value ## into the lower 8-bits of X        |
+| 0x5XY0 | STB         | Y , X     | r0-sp, r0-r7 | Store the value of X into memory at address (Y)                 |
+| 0x5XY1 | STW         | Y , X     | r0-sp, r0-r7 | Store the value of X into memory at address (Y)                 |
+| 0x6X00 | JMP         | X , --    | r0-sp, --    | Start executing instructions from address (X)                   |
+| 0x6XY1 | JNZ         | X , Y     | r0-sp, r0-r7 | Jump to address (X) only if Y is not zero                       |
+| 0x7XN0 | SHR         | X , N     | r0-r7, 0-15  | Bit shift the value in X to the right by N (4-bit) bits         |
+| 0x7XN1 | SHL         | X , N     | r0-r7, 0-15  | Bit shift the value in X to the left by N (4-bit) bits          |
+| 0x8N00 | TEST        | N , --    | 0-15 , --    | Skip next instruction if bit N in fg is set                     |
+| 0x8N01 | SETF        | N , --    | 0-15 , --    | Set bit N of fg register                                        |
+| 0x8N02 | CLRF        | N , --    | 0-15 , --    | Clear bit N of fg register                                      |
+
+## Assembler Pseudo-Instructions
+
+| Pseudo-Instruction | Arguments | Valid Values | Equivalent  |
+| ------------------ | --------- | ------------ | ----------- |
+| PUSH               | X         | r0-r7, --    | INC sp      |
+|                    |           |              | STW sp, X   |
+| POP                | X         | r0-r7, --    | LDW X, sp   |
+|                    |           |              | DEC X       |
+| LDL                | X, AABB   | r0-r7, addr  | LDI X, AA   |
+|                    |           |              | SHL X, 8    |
+|                    |           |              | LDI X, BB   |
