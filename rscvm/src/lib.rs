@@ -1,10 +1,10 @@
+use num_derive::ToPrimitive;
+use num_traits::ToPrimitive;
 use std::fs;
 use std::io::ErrorKind;
-use std::time::Instant;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use num_traits::ToPrimitive;
-use num_derive::ToPrimitive;
+use std::sync::Arc;
+use std::time::Instant;
 
 enum Exception {
     IOP,
@@ -47,7 +47,7 @@ pub struct Configuration {
     pub initial_pc: u16,
     pub memory_size: u16,
     pub firmware_file: String,
-    pub verbose: bool
+    pub verbose: bool,
 }
 
 impl Configuration {
@@ -57,8 +57,8 @@ impl Configuration {
             initial_pc: 0,
             memory_size: 0x4000,
             firmware_file: String::new(),
-            verbose: false
-        }
+            verbose: false,
+        };
     }
 
     pub fn dump_to_stdout(&self) {
@@ -73,22 +73,24 @@ impl Configuration {
 
 struct Firmware {
     data: Box<[u8]>,
-    size: u16
+    size: u16,
 }
 
 impl Firmware {
     pub fn from_file(path: &String) -> Self {
         match fs::read(path) {
-            Ok(bytes) => return Self { 
-                size: bytes.len() as u16,
-                data: bytes.into_boxed_slice() 
-            },
+            Ok(bytes) => {
+                return Self {
+                    size: bytes.len() as u16,
+                    data: bytes.into_boxed_slice(),
+                }
+            }
             Err(e) => {
                 eprint!("Failed to load firmware: ");
                 match e.kind() {
                     ErrorKind::PermissionDenied => eprintln!("permission denied."),
                     ErrorKind::NotFound => eprintln!("file not found."),
-                    _ => eprintln!("unknown error.")
+                    _ => eprintln!("unknown error."),
                 }
                 panic!("{}", e);
             }
@@ -98,32 +100,32 @@ impl Firmware {
     pub fn default() -> Self {
         let default = vec![
             // Move 0xDEAD into r0
-            0xDE, 0x40,
-            0x81, 0x70,
-            0xAD, 0x40,
-            // Move 0xDEAD into r1
-            0xBE, 0x41,
-            0x81, 0x71,
-            0xEF, 0x41,
+            0xDE, 0x40, 
+            0x81, 0x70, 
+            0xAD, 0x40, 
+            // Move 0xBEEF into r1
+            0xBE, 0x41, 
+            0x81, 0x71, 
+            0xEF, 0x41, 
             // Load no-op address
-            0x00, 0x42,
-            0x81, 0x72,
-            0x12, 0x42,
+            0x00, 0x42, 
+            0x81, 0x72, 
+            0x12, 0x42, 
             // No-op
-            0x00, 0x00,
+            0x00, 0x00, 
             // Jump to no-op
-            0x00, 0x62
+            0x00, 0x62,
         ];
         return Self {
             size: default.len() as u16,
-            data: default.into_boxed_slice()
-        }
+            data: default.into_boxed_slice(),
+        };
     }
 }
 
 struct Memory {
     data: Box<[u8]>,
-    size: u16
+    size: u16,
 }
 
 impl Memory {
@@ -137,28 +139,28 @@ impl Memory {
         }
         return Self {
             data: vec.into_boxed_slice(),
-            size: alloc_size
-        }
+            size: alloc_size,
+        };
     }
 }
 
-struct Register {
+struct Registers {
     r: [u16; 8],
     c: [u16; 2],
     sp: u16,
     fg: u16,
-    pc: u16
+    pc: u16,
 }
 
-impl Register {
+impl Registers {
     pub fn new() -> Self {
         return Self {
             r: [0; 8],
             c: [0; 2],
             sp: 0,
             fg: 0,
-            pc: 0
-        }
+            pc: 0,
+        };
     }
 }
 
@@ -166,8 +168,8 @@ pub struct VirtualMachine {
     config: Configuration,
     firmware: Firmware,
     mem: Memory,
-    regs: Register,
-    pub should_run: Arc<AtomicBool>
+    regs: Registers,
+    pub should_run: Arc<AtomicBool>,
 }
 
 impl VirtualMachine {
@@ -178,14 +180,14 @@ impl VirtualMachine {
             Firmware::from_file(&config.firmware_file)
         };
         let mem = Memory::new(config.memory_size);
-        let regs = Register::new();
+        let regs = Registers::new();
         return Self {
             config,
             firmware,
             mem,
             regs,
-            should_run: Arc::new(AtomicBool::new(true))
-        }
+            should_run: Arc::new(AtomicBool::new(true)),
+        };
     }
 
     pub fn dump_to_stdout(&self) {
@@ -195,8 +197,8 @@ impl VirtualMachine {
         println!(" R2={:0>4X}    R3={:0>4X}", self.regs.r[2], self.regs.r[3]);
         println!(" R4={:0>4X}    R5={:0>4X}", self.regs.r[4], self.regs.r[5]);
         println!(" C0={:0>4X}    C1={:0>4X}", self.regs.c[0], self.regs.c[1]);
-        println!(" FG={:0>4X}    SP={:0>4X}", self.regs.fg,   self.regs.sp  );
-        println!(" PC={:0>4X}              ", self.regs.pc                  );
+        println!(" FG={:0>4X}    SP={:0>4X}", self.regs.fg, self.regs.sp);
+        println!(" PC={:0>4X}              ", self.regs.pc);
     }
 
     pub fn reset(&mut self) {
@@ -239,7 +241,10 @@ impl VirtualMachine {
     fn step(&mut self) -> Result<u16, Exception> {
         let opcode = self.fetch();
         if self.config.verbose {
-            println!(" [PC={:0>4X}] Executing opcode ({:0>4X})", self.regs.pc, opcode);
+            println!(
+                " [PC={:0>4X}] Executing opcode ({:0>4X})",
+                self.regs.pc, opcode
+            );
         }
         match decode_opcode(opcode) {
             Some(i) => {
@@ -247,45 +252,53 @@ impl VirtualMachine {
                 let y = (opcode & 0x00F0) >> 4;
                 let nn = opcode & 0x00FF;
                 match i {
-                    Instruction::NOP => {},
+                    Instruction::NOP => {}
                     Instruction::AND => {
-                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::R7) {
+                        if !check_register_range(x, RegisterId::R7)
+                            || !check_register_range(y, RegisterId::R7)
+                        {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] &= self.regs.r[y as usize];
-                    },
+                    }
                     Instruction::NOT => {
                         if !check_register_range(x, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] = !self.regs.r[x as usize];
-                    },
+                    }
                     Instruction::ADD => {
-                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::R7) {
+                        if !check_register_range(x, RegisterId::R7)
+                            || !check_register_range(y, RegisterId::R7)
+                        {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] += self.regs.r[y as usize];
-                    },
+                    }
                     Instruction::SUB => {
-                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::R7) {
+                        if !check_register_range(x, RegisterId::R7)
+                            || !check_register_range(y, RegisterId::R7)
+                        {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] -= self.regs.r[y as usize];
-                    },
+                    }
                     Instruction::INC => {
                         if !check_register_range(x, RegisterId::SP) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] += 1;
-                    },
+                    }
                     Instruction::DEC => {
                         if !check_register_range(x, RegisterId::SP) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] -= 1;
-                    },
+                    }
                     Instruction::LDB => {
-                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::SP) {
+                        if !check_register_range(x, RegisterId::R7)
+                            || !check_register_range(y, RegisterId::SP)
+                        {
                             return Err(Exception::IOP);
                         }
                         let address = self.regs.r[y as usize];
@@ -294,31 +307,39 @@ impl VirtualMachine {
                         }
                         let xh = self.regs.r[x as usize] & 0xFF00;
                         self.regs.r[x as usize] = xh | self.mem.data[address as usize] as u16;
-                    },
+                    }
                     Instruction::LDW => {
-                        if !check_register_range(x, RegisterId::R7) || !check_register_range(y, RegisterId::SP) {
+                        if !check_register_range(x, RegisterId::R7)
+                            || !check_register_range(y, RegisterId::SP)
+                        {
                             return Err(Exception::IOP);
                         }
                         let address = self.regs.r[y as usize];
                         if address >= self.mem.size - 1 {
                             return Err(Exception::SEG);
                         }
-                        self.regs.r[x as usize] = ((self.mem.data[address as usize + 1] as u16) << 8) | (self.mem.data[address as usize] as u16);
-                    },
+                        self.regs.r[x as usize] = ((self.mem.data[address as usize + 1] as u16)
+                            << 8)
+                            | (self.mem.data[address as usize] as u16);
+                    }
                     Instruction::MOV => {
-                        if !check_register_range(x, RegisterId::C1) || !check_register_range(y, RegisterId::C1) {
+                        if !check_register_range(x, RegisterId::C1)
+                            || !check_register_range(y, RegisterId::C1)
+                        {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] = self.regs.r[y as usize];
-                    },
+                    }
                     Instruction::LDI => {
                         if !check_register_range(x, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] = (self.regs.r[x as usize] & 0xFF00) | nn;
-                    },
+                    }
                     Instruction::STB => {
-                        if !check_register_range(x, RegisterId::SP) || !check_register_range(y, RegisterId::R7) {
+                        if !check_register_range(x, RegisterId::SP)
+                            || !check_register_range(y, RegisterId::R7)
+                        {
                             return Err(Exception::IOP);
                         }
                         let address = self.regs.r[x as usize];
@@ -326,9 +347,11 @@ impl VirtualMachine {
                             return Err(Exception::SEG);
                         }
                         self.mem.data[address as usize] = (self.regs.r[y as usize] & 0x00FF) as u8;
-                    },
+                    }
                     Instruction::STW => {
-                        if !check_register_range(x, RegisterId::SP) || !check_register_range(y, RegisterId::R7) {
+                        if !check_register_range(x, RegisterId::SP)
+                            || !check_register_range(y, RegisterId::R7)
+                        {
                             return Err(Exception::IOP);
                         }
                         let address = self.regs.r[x as usize];
@@ -337,7 +360,7 @@ impl VirtualMachine {
                         }
                         self.mem.data[address as usize + 1] = (self.regs.r[y as usize] >> 8) as u8;
                         self.mem.data[address as usize] = (self.regs.r[y as usize] & 0x00FF) as u8;
-                    },
+                    }
                     Instruction::JMP => {
                         if !check_register_range(x, RegisterId::SP) {
                             return Err(Exception::IOP);
@@ -347,9 +370,11 @@ impl VirtualMachine {
                             return Err(Exception::UNA);
                         }
                         self.regs.pc = address;
-                    },
+                    }
                     Instruction::JNZ => {
-                        if !check_register_range(x, RegisterId::SP) || !check_register_range(y, RegisterId::R7) {
+                        if !check_register_range(x, RegisterId::SP)
+                            || !check_register_range(y, RegisterId::R7)
+                        {
                             return Err(Exception::IOP);
                         }
                         let address = self.regs.r[x as usize];
@@ -359,30 +384,30 @@ impl VirtualMachine {
                         if self.regs.r[y as usize] == 0 {
                             self.regs.pc = address;
                         }
-                    },
+                    }
                     Instruction::SHR => {
                         if !check_register_range(x, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] >>= y;
-                    },
+                    }
                     Instruction::SHL => {
                         if !check_register_range(x, RegisterId::R7) {
                             return Err(Exception::IOP);
                         }
                         self.regs.r[x as usize] <<= y;
-                    },
+                    }
                     Instruction::TEST => {
                         if self.regs.fg & (1 << x) != 0 {
                             self.regs.pc += 2;
                         }
-                    },
+                    }
                     Instruction::SETF => {
                         self.regs.fg |= 1 << x;
-                    },
+                    }
                     Instruction::CLRF => {
                         self.regs.fg &= !(1 << x);
-                    },
+                    }
                 }
             }
             None => panic!("Failed to fetch next instruction"),
@@ -394,7 +419,7 @@ impl VirtualMachine {
 fn check_register_range(reg: u16, ceil: RegisterId) -> bool {
     match ceil.to_u16() {
         Some(n) => return reg <= n,
-        None => return false
+        None => return false,
     }
 }
 
@@ -421,5 +446,5 @@ fn decode_opcode(opcode: u16) -> Option<Instruction> {
         0x8001 => Some(Instruction::SETF),
         0x8002 => Some(Instruction::CLRF),
         _ => None,
-    }
+    };
 }

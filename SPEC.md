@@ -27,8 +27,8 @@ The system stores values in the **little endian format**.
 | 0x3XY1 | LDW         | X , Y     | r0-r7, r0-sp | Load word from memory address (Y) into X                        |
 | 0x3XY2 | MOV         | X , Y     | r0-c1, r0-c1 | Copy the value of Y into X                                      |
 | 0x4XNN | LDI         | X , NN    | r0-r7, 0-255 | Load immediate 8-bit value ## into the lower 8-bits of X        |
-| 0x5XY0 | STB         | Y , X     | r0-sp, r0-r7 | Store the value of X into memory at address (Y)                 |
-| 0x5XY1 | STW         | Y , X     | r0-sp, r0-r7 | Store the value of X into memory at address (Y)                 |
+| 0x5YX0 | STB         | Y , X     | r0-sp, r0-r7 | Store the value of X into memory at address (Y)                 |
+| 0x5YX1 | STW         | Y , X     | r0-sp, r0-r7 | Store the value of X into memory at address (Y)                 |
 | 0x6X00 | JMP         | X , --    | r0-sp, --    | Start executing instructions from address (X)                   |
 | 0x6XY1 | JNZ         | X , Y     | r0-sp, r0-r7 | Jump to address (X) only if Y is not zero                       |
 | 0x7XN0 | SHR         | X , N     | r0-r7, 0-15  | Bit shift the value in X to the right by N (4-bit) bits         |

@@ -1,335 +1,400 @@
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::io::ErrorKind;
-use std::num::ParseIntError;
-use std::path::PathBuf;
-use std::fs;
+use std::{fs, path::PathBuf, str::FromStr};
 
-#[derive(Eq, Hash, PartialEq)]
-pub enum Flag {
-    ENTRY
+const TRAMPOLINE_SIZE: u64 = 4 * 2;
+
+#[macro_export]
+macro_rules! critical {
+    ($($arg:tt)*) => {
+        {
+            eprintln!($($arg)*);
+            std::process::exit(-1);
+        }
+    };
 }
 
-pub enum FlagValue {
-    String(String),
-    Integer(u64),
-    Boolean(bool)
-}
-
-enum Error {
-    IOP,
-    UOP,
-    EOL
-}
-
-struct File {
-    bytes: Vec<u8>,
-    main: bool
+pub enum Token {
+    // Literals
+    Label(u64, u16),
+    // Assembler directives
+    Short(u16),
+    // Instructions
+    Nop,
+    And(u16, u16),
+    Not(u16),
+    Add(u16, u16),
+    Sub(u16, u16),
+    Inc(u16),
+    Dec(u16),
+    Ldb(u16, u16),
+    Ldw(u16, u16),
+    Mov(u16, u16),
+    Ldi(u16, u8),
+    Stb(u16, u16),
+    Stw(u16, u16),
+    Jmp(u16),
+    Jnz(u16, u16),
+    Shr(u16, u8),
+    Shl(u16, u8),
+    Test(u8),
+    Setf(u8),
+    Clrf(u8),
+    // Assembler pseudo instructions
+    Push(u16),
+    Pop(u16),
+    Ldl(u16, u64),
 }
 
 pub struct Job {
-    files: Vec<PathBuf>,
+    files: Vec<String>,
+    entry: String,
     output: String,
-    flags: HashMap<Flag, FlagValue>
+    trampoline: bool,
+    address: u64,
 }
 
 impl Job {
     pub fn new() -> Self {
         return Self {
             files: Vec::new(),
-            output: "".to_string(),
-            flags: HashMap::new()
+            entry: "_start".to_string(),
+            output: "a.out".to_string(),
+            trampoline: false,
+            address: 0,
+        };
+    }
+
+    pub fn add_file(&mut self, path: String) {
+        self.files.push(path);
+    }
+
+    pub fn set_entry(&mut self, entry: String) {
+        self.entry = entry;
+    }
+
+    pub fn set_output(&mut self, path: String) {
+        self.output = path;
+    }
+
+    pub fn trampoline(&mut self) {
+        self.address += TRAMPOLINE_SIZE;
+        self.trampoline = true;
+    }
+
+    fn get_lines(&self) -> Vec<String> {
+        if self.files.is_empty() {
+            critical!("No input file provided.");
         }
-    }
-
-    pub fn add_file(&mut self, path: &str) {
-        let abs_path = fs::canonicalize(path)
-            .expect(format!("Failed to convert {} to absolute path", path).as_str());
-        self.files.push(abs_path);
-    }
-
-    pub fn add_flag(&mut self, flag: Flag, value: FlagValue) {
-        self.flags.insert(flag, value);
-    }
-
-    pub fn set_output(&mut self, output: &str) {
-        if output.is_empty() {
-            panic!("Not output file provided");
-        }
-        if !self.output.is_empty() {
-            panic!("Output file was provided more than one time!");
-        }
-        self.output = output.to_string();
-    }
-
-    pub fn run(&self) {
-        self.ok();
-        let mut files = Vec::new();
+        let mut code = Vec::new();
         for path in self.files.iter() {
-            let contents = read_file(path);
-            if !contents.is_ascii() {
-                panic!("{} contents are not in ASCII format.", path.display());
+            let content = read_file(path);
+            if !content.is_ascii() {
+                critical!("File `{}` is not ASCII.", path);
             }
-            let lines = contents.split("\n");
-            let mut bytes = Vec::new();
+            let lines = content.split("\n");
             for line in lines.into_iter() {
-                let opcode = self.gen_opcode(line.trim());
-                match opcode {
-                    Ok(data) => {
-                        bytes.push(data.0);
-                        bytes.push(data.1);
-                    }
-                    Err(reason) => {
-                        match reason {
-                            Error::IOP => panic!("Invalid instruction '{}'", line),
-                            Error::UOP => panic!("Unknown instruction '{}'", line),
-                            Error::EOL => {}
-                        }
-                    }
+                if !line.trim().is_empty() {
+                    code.push(line.trim_start().trim_end().to_string());
                 }
             }
-            files.push(File {
-                bytes,
-                main: false
-            });
         }
-        write_file(self.output.as_str(), &mut files);
+        return code;
     }
 
-    fn ok(&self) {
-        if self.files.len() == 0 {
-            panic!("No source files specified.");
+    pub fn tokenize(&mut self) -> Vec<Token> {
+        let lines = self.get_lines();
+        let mut tokens = Vec::new();
+        for i in 0..lines.len() {
+            let line = match lines.get(i) {
+                Some(line) => line,
+                None => critical!("Failed to fetch line number {}.", i),
+            };
+            if self.address >= u16::MAX as u64 {
+                critical!("Exceeded maximum binary size! Fault line: `{}`.", line);
+            }
+            tokens.push(self.gen_token(line.trim_end()));
         }
-        
-        if self.output.is_empty() {
-            panic!("No output file specified.");
+        if self.trampoline {
+            let id = calculate_label_id(self.entry.as_str());
+            tokens.insert(0, Token::Ldl(0, id));
+            tokens.insert(1, Token::Jmp(0));
         }
+        return tokens;
     }
 
-    fn gen_opcode(&self, line: &str) -> Result<(u8, u8), Error> {
-        let inst_and_params = line.split_once(" ")
-            .unwrap_or((line, ""));
-        let inst = inst_and_params.0.to_ascii_lowercase();
-        if inst.is_empty() {
-            return Err(Error::EOL);
+    pub fn write_output(&self, bytes: &Vec<u8>) {
+        if let Ok(path) = PathBuf::from_str(self.output.as_str()) {
+            match fs::write(path, bytes) {
+                Ok(_) => println!("Wrote {} bytes.", bytes.len()),
+                Err(err) => critical!(
+                    "An error occured when writing file `{}`:\n`{}`.",
+                    self.output,
+                    err.to_string()
+                ),
+            }
+            return;
         }
-        let mut params = inst_and_params.1.split(",");
-        match inst.as_str() {
-            "hlt" => return Ok((0x00, 0x00)),
-            "call" => {
-                let x = get_num_reg(params.next());
-                if x >= 0x08 {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x10 | x, 0x00));
+        critical!("Failed to write output file `{}`.", self.output);
+    }
+
+    fn gen_token(&mut self, raw_line: &str) -> Token {
+        let line = match raw_line.split_once(' ') {
+            Some(parts) => parts,
+            None => (raw_line, ""),
+        };
+        if line.0.starts_with('.') && !line.1.is_empty() {
+            return self.gen_directive_token(line.0, line.1);
+        }
+        if line.0.ends_with(':') && line.1.trim().is_empty() {
+            return self.gen_label_token(line.0);
+        }
+        return self.gen_instruction_token(line.0, line.1);
+    }
+
+    fn gen_instruction_token(&mut self, instruction: &str, arguments: &str) -> Token {
+        let arguments = arguments.trim().split(',').collect::<Vec<&str>>();
+        let assert_args_len_eq = |len| -> () {
+            let arglen = arguments.len();
+            if (len == 0 && (arglen > 1 || !arguments[0].is_empty())) || (len > 0 && arglen > len) {
+                critical!(
+                    "Too many arguments for assembler instruction `{}`.",
+                    instruction
+                );
+            } else if arglen < len {
+                critical!(
+                    "Not enough arguments for assembler instruction `{}`.",
+                    instruction
+                );
             }
-            "ret" => return Ok((0x20, 0x00)),
-            "jmp" => {
-                let x = get_num_reg(params.next());
-                if x >= 0x08 {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x30 | x, 0x00));
+        };
+        self.address += 2;
+        return match instruction {
+            "nop" => {
+                assert_args_len_eq(0);
+                Token::Nop
             }
-            "jnz" => {
-                let x = get_num_reg(params.next());
-                if x >= 0x08 {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x40 | x, 0x00));
-            }
-            "mov" => {
-                let x = get_num_reg(params.next());
-                let y = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x50 | x, 0x00 | (y << 4)));
-            }
-            "ldi" => {
-                let x = get_num_reg(params.next());
-                let i = params.next().unwrap_or_default().trim();
-                if i.is_empty() || x >= 0x08 {
-                    return Err(Error::IOP);
-                }
-                let n = to_unsigned_byte(i);
-                match n {
-                    Ok(n) => return Ok((0x60 | x, n)),
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        return Err(Error::IOP);
-                    }
-                }
-            }
-            "ldb" => {
-                let x = get_num_reg(params.next());
-                let y = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x70 | x, 0x00 | (y << 4)));
-            }
-            "ldw" => {
-                let x = get_num_reg(params.next());
-                let y = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x70 | x, 0x01 | (y << 4)));
-            }
-            "stb" => {
-                let y = get_num_reg(params.next());
-                let x = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x80 | y, 0x00 | (x << 4)));
-            }
-            "stw" => {
-                let y = get_num_reg(params.next());
-                let x = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x80 | y, 0x01 | (x << 4)));
-            }
-            "pushr" => {
-                let x = get_num_reg(params.next());
-                if x > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0x90 | x, 0x00));
-            }
-            "pushf" => return Ok((0x90, 01)),
-            "popr" => {
-                let x = get_num_reg(params.next());
-                if x > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0xA0 | x, 0x00));
-            }
-            "popf" => return Ok((0xA0, 01)),
             "and" => {
-                let x = get_num_reg(params.next());
-                let y = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0xB0 | x, 0x00 | (y << 4)));
+                assert_args_len_eq(2);
+                Token::And(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "not" => {
-                let x = get_num_reg(params.next());
-                if x > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0xC0 | x, 0x00));
-            }
-            "shr" => {
-                let x = get_num_reg(params.next());
-                let i = params.next().unwrap_or_default().trim();
-                if i.is_empty() || x >= 0x08 {
-                    return Err(Error::IOP);
-                }
-                let n = to_unsigned_byte(i);
-                match n {
-                    Ok(n) => return Ok((0xD0 | x, n)),
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        return Err(Error::IOP);
-                    }
-                }
-            }
-            "shl" => {
-                let x = get_num_reg(params.next());
-                let i = params.next().unwrap_or_default().trim();
-                if i.is_empty() || x >= 0x08 {
-                    return Err(Error::IOP);
-                }
-                let n = to_unsigned_byte(i);
-                match n {
-                    Ok(n) => return Ok((0xE0 | x, n)),
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        return Err(Error::IOP);
-                    }
-                }
+                assert_args_len_eq(1);
+                Token::Not(reg_name_to_num(arguments[0]))
             }
             "add" => {
-                let x = get_num_reg(params.next());
-                let y = get_num_reg(params.next());
-                if x > 0x0A || y > 0x0A {
-                    return Err(Error::IOP);
-                }
-                return Ok((0xF0 | x, 0x00 | (y << 4)));
+                assert_args_len_eq(2);
+                Token::Add(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
-            _ => return Err(Error::UOP)
+            "sub" => {
+                assert_args_len_eq(2);
+                Token::Sub(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "inc" => {
+                assert_args_len_eq(1);
+                Token::Inc(reg_name_to_num(arguments[0]))
+            }
+            "dec" => {
+                assert_args_len_eq(1);
+                Token::Dec(reg_name_to_num(arguments[0]))
+            }
+            "ldb" => {
+                assert_args_len_eq(2);
+                Token::Ldb(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "ldw" => {
+                assert_args_len_eq(2);
+                Token::Ldw(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "mov" => {
+                assert_args_len_eq(2);
+                Token::Mov(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "ldi" => {
+                assert_args_len_eq(2);
+                Token::Ldi(
+                    reg_name_to_num(arguments[0]),
+                    parse_int_from_string(arguments[1]),
+                )
+            }
+            "stb" => {
+                assert_args_len_eq(2);
+                Token::Stb(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "stw" => {
+                assert_args_len_eq(2);
+                Token::Stw(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "jmp" => {
+                assert_args_len_eq(1);
+                Token::Jmp(reg_name_to_num(arguments[0]))
+            }
+            "jnz" => {
+                assert_args_len_eq(2);
+                Token::Jnz(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+            }
+            "shr" => {
+                assert_args_len_eq(2);
+                Token::Shr(
+                    reg_name_to_num(arguments[0]),
+                    parse_int_from_string(arguments[1]),
+                )
+            }
+            "shl" => {
+                assert_args_len_eq(2);
+                Token::Shl(
+                    reg_name_to_num(arguments[0]),
+                    parse_int_from_string(arguments[1]),
+                )
+            }
+            "test" => {
+                assert_args_len_eq(1);
+                Token::Test(parse_int_from_string(arguments[0]))
+            }
+            "setf" => {
+                assert_args_len_eq(1);
+                Token::Setf(parse_int_from_string(arguments[0]))
+            }
+            "clrf" => {
+                assert_args_len_eq(1);
+                Token::Clrf(parse_int_from_string(arguments[0]))
+            }
+            _ => self.gen_pseudo_instruction_token(instruction, &arguments),
+        };
+    }
+
+    fn gen_pseudo_instruction_token(&mut self, instruction: &str, arguments: &Vec<&str>) -> Token {
+        let assert_args_len_eq = |len| -> () {
+            let arglen = arguments.len();
+            if arglen > len {
+                critical!(
+                    "Too many arguments for assembler instruction `{}`.",
+                    instruction
+                );
+            } else if arglen < len {
+                critical!(
+                    "Not enough arguments for assembler instruction `{}`.",
+                    instruction
+                );
+            }
+        };
+        return match instruction {
+            "push" => {
+                assert_args_len_eq(1);
+                self.address += 2;
+                Token::Push(reg_name_to_num(arguments[0]))
+            }
+            "pop" => {
+                assert_args_len_eq(1);
+                self.address += 2;
+                Token::Pop(reg_name_to_num(arguments[0]))
+            }
+            "ldl" => {
+                assert_args_len_eq(2);
+                self.address += 4;
+                let trimmed = arguments[1].trim().trim_start_matches("0x");
+                let value = match trimmed.parse::<u16>() {
+                    Ok(v) => v as u64,
+                    Err(_) => match u16::from_str_radix(trimmed, 16) {
+                        Ok(v) => v as u64,
+                        Err(_) => calculate_label_id(trimmed),
+                    },
+                };
+                Token::Ldl(reg_name_to_num(arguments[0]), value)
+            }
+            _ => critical!("Invalid instruction `{}`.", instruction),
+        };
+    }
+
+    fn gen_directive_token(&mut self, directive: &str, arguments: &str) -> Token {
+        let directive = match directive.strip_prefix('.') {
+            Some(str) => str,
+            None => critical!("Failed to remove semicolon from label (`{}`).", directive),
+        };
+        let arguments = arguments.trim().split(',').collect::<Vec<&str>>();
+        let assert_args_len_eq = |len| -> () {
+            let arglen = arguments.len();
+            if arglen > len {
+                critical!(
+                    "Too many arguments for assembler directive `.{}`.",
+                    directive
+                );
+            } else if arglen < len {
+                critical!(
+                    "Not enough arguments for assembler instruction `.{}`.",
+                    directive
+                );
+            }
+        };
+        return match directive {
+            "short" => {
+                assert_args_len_eq(1);
+                let short = parse_int_from_string(arguments[0]);
+                self.address += 2;
+                Token::Short(short)
+            }
+            _ => critical!("Invalid directive `.{}`.", directive),
+        };
+    }
+
+    fn gen_label_token(&mut self, line: &str) -> Token {
+        let label = match line.strip_suffix(':') {
+            Some(str) => str,
+            None => critical!("Failed to remove semicolon from label (`{}`).", line),
+        };
+        if self.trampoline && self.entry.as_str() == label && self.address == TRAMPOLINE_SIZE {
+            self.address -= TRAMPOLINE_SIZE;
+            self.trampoline = false;
         }
+        return Token::Label(calculate_label_id(label), self.address as u16);
     }
 }
 
-fn to_unsigned_byte(i: &str) -> Result<u8, ParseIntError> {
-    if i.starts_with("0x") {
-        return u8::from_str_radix(i.replace("0x", "").as_str(), 16);
-    } else {
-        return i.parse::<u8>()
+fn calculate_label_id(label: &str) -> u64 {
+    let label = label.as_bytes();
+    let mut hash = 0;
+    for j in (0..label.len()).step_by(8) {
+        let mut mask = 0;
+        for i in 0..8 {
+            let index = i + j;
+            let value = if index < label.len() { label[index] } else { 0 };
+            mask |= (value as u64) << i * 8;
+        }
+        hash ^= mask;
     }
+    return hash;
 }
 
-fn get_num_reg(string: Option<&str>) -> u8 {
-    let x_str = string.unwrap_or_default().trim();
-    match x_str {
-        "c0" => return 0x08,
-        "c1" => return 0x09,
-        "sp" => return 0x0A,
-        _ => {
-            let x_bytes = x_str.as_bytes();
-            if x_bytes.len() < 2 {
-                return 0xFF;
-            }
-            if x_bytes[0] != ('r' as u8) || x_bytes[1] < ('0' as u8) || x_bytes[1] > ('7' as u8) {
-                return 0xFF;
-            }
-            return x_bytes[1] - ('0' as u8);
-        }
-    }
+fn parse_int_from_string<F: std::str::FromStr>(string: &str) -> F {
+    return match string.parse::<F>() {
+        Ok(val) => val,
+        Err(_) => critical!("Error parsing `{}` into unsigned integer.", string),
+    };
 }
 
-fn write_file(output: &str, files: &mut Vec<File>) {
-    files.sort_by(|this, to| {
-        if this.main && !to.main {
-            return Ordering::Greater;
-        } else if !this.main && to.main {
-            return Ordering::Less;
-        } else if !this.main && !to.main {
-            return Ordering::Equal;
-        } else {
-            panic!("Found two entry points when only one was expected");
-        }
-    });
-    let mut contents = Vec::new();
-    for file in files {
-        contents.append(&mut file.bytes);
+fn reg_name_to_num(name: &str) -> u16 {
+    if name == "sp" {
+        return 0x0A;
+    } else if name.starts_with("r") || name.starts_with('c') {
+        return match name.get(1..2) {
+            Some(num) => parse_int_from_string(num),
+            None => critical!(
+                "Failed to obtain register number (input string was `{}`).",
+                name
+            ),
+        };
     }
-    let bytes = contents.len();
-    match fs::write(output, contents) {
-        Ok(_) => println!("Compilation finished. Wrote {} bytes", bytes),
-        Err(_) => panic!("Failed to write output file"),
-    }
+    critical!("Invalid register `{}`.", name)
 }
 
-fn read_file(file: &PathBuf) -> String {
-    match fs::read_to_string(file) {
-        Ok(string) => {
-            return string;
-        },
-        Err(e) => {
-            eprint!("Failed to open file {}: ", file.display());
-            match e.kind() {
-                ErrorKind::PermissionDenied => eprintln!("permission denied."),
-                ErrorKind::NotFound => eprintln!("file not found."),
-                _ => eprintln!("unknown error.")
-            }
-            panic!("{}", e);
+fn read_file(file: &String) -> String {
+    if let Ok(path) = PathBuf::from_str(file.as_str()) {
+        match fs::read_to_string(path) {
+            Ok(str) => return str,
+            Err(err) => critical!(
+                "An error occured when reading file `{}`:\n`{}`.",
+                file,
+                err.to_string()
+            ),
         }
     }
+    critical!("Failed to create file path from string `{}`.", file);
 }
