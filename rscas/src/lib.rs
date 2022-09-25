@@ -16,7 +16,8 @@ pub enum Token {
     // Literals
     Label(u64, u16),
     // Assembler directives
-    Short(u16),
+    Short(u64, bool),
+    Addr(u16),
     // Instructions
     Nop,
     And(u16, u16),
@@ -42,6 +43,54 @@ pub enum Token {
     Push(u16),
     Pop(u16),
     Ldl(u16, u64),
+}
+
+pub struct Executable {
+    bytes: Vec<u8>,
+    address: u16,
+}
+
+impl Executable {
+    pub fn new() -> Self {
+        return Self {
+            bytes: Vec::new(),
+            address: 0
+        };
+    }
+
+    fn push_byte(&mut self, b: u8) {
+        let mut current_address = self.bytes.len() as u16;
+        if self.address > current_address {
+            for _ in current_address..self.address {
+                self.bytes.push(0);
+            }
+            current_address = self.address;
+        }
+        if self.address == current_address {
+            self.bytes.push(b);
+        } else {
+            self.bytes.remove(self.address as usize);
+            self.bytes.insert(self.address as usize, b);
+        }
+        self.address += 1;
+    }
+
+    pub fn push_short(&mut self, s: u16) {
+        self.push_byte((s & 0x00FF) as u8);
+        self.push_byte(((s & 0xFF00) >> 8) as u8);
+    }
+
+    pub fn size(&self) -> usize {
+        return self.bytes.len();
+    }
+
+    pub fn set_address(&mut self, a: u16) {
+        self.address = a;
+    }
+
+    pub fn bytes(&self) -> &Vec<u8> {
+        return &self.bytes;
+    }
 }
 
 pub struct Job {
@@ -121,10 +170,10 @@ impl Job {
         return tokens;
     }
 
-    pub fn write_output(&self, bytes: &Vec<u8>) {
+    pub fn write_output(&self, exec: Executable) {
         if let Ok(path) = PathBuf::from_str(self.output.as_str()) {
-            match fs::write(path, bytes) {
-                Ok(_) => println!("Wrote {} bytes.", bytes.len()),
+            match fs::write(path, exec.bytes()) {
+                Ok(_) => println!("Wrote {} bytes.", exec.size()),
                 Err(err) => critical!(
                     "An error occured when writing file `{}`:\n`{}`.",
                     self.output,
@@ -138,20 +187,20 @@ impl Job {
 
     fn gen_token(&mut self, raw_line: &str) -> Token {
         let line = match raw_line.split_once(' ') {
-            Some(parts) => parts,
-            None => (raw_line, ""),
+            Some(parts) => (parts.0.to_string(), parts.1.replace(" ", "")),
+            None => (raw_line.to_string(), "".to_string()),
         };
         if line.0.starts_with('.') && !line.1.is_empty() {
-            return self.gen_directive_token(line.0, line.1);
+            return self.gen_directive_token(&line.0, &line.1);
         }
-        if line.0.ends_with(':') && line.1.trim().is_empty() {
-            return self.gen_label_token(line.0);
+        if line.0.ends_with(':') && line.1.is_empty() {
+            return self.gen_label_token(&line.0);
         }
-        return self.gen_instruction_token(line.0, line.1);
+        return self.gen_instruction_token(&line.0, &line.1);
     }
 
-    fn gen_instruction_token(&mut self, instruction: &str, arguments: &str) -> Token {
-        let arguments = arguments.trim().split(',').collect::<Vec<&str>>();
+    fn gen_instruction_token(&mut self, instruction: &String, arguments: &String) -> Token {
+        let arguments = arguments.split(',').collect::<Vec<&str>>();
         let assert_args_len_eq = |len| -> () {
             let arglen = arguments.len();
             if (len == 0 && (arglen > 1 || !arguments[0].is_empty())) || (len > 0 && arglen > len) {
@@ -167,7 +216,7 @@ impl Job {
             }
         };
         self.address += 2;
-        return match instruction {
+        return match instruction.as_str() {
             "nop" => {
                 assert_args_len_eq(0);
                 Token::Nop
@@ -261,7 +310,7 @@ impl Job {
         };
     }
 
-    fn gen_pseudo_instruction_token(&mut self, instruction: &str, arguments: &Vec<&str>) -> Token {
+    fn gen_pseudo_instruction_token(&mut self, instruction: &String, arguments: &Vec<&str>) -> Token {
         let assert_args_len_eq = |len| -> () {
             let arglen = arguments.len();
             if arglen > len {
@@ -276,7 +325,7 @@ impl Job {
                 );
             }
         };
-        return match instruction {
+        return match instruction.as_str() {
             "push" => {
                 assert_args_len_eq(1);
                 self.address += 2;
@@ -290,12 +339,14 @@ impl Job {
             "ldl" => {
                 assert_args_len_eq(2);
                 self.address += 4;
-                let trimmed = arguments[1].trim().trim_start_matches("0x");
-                let value = match trimmed.parse::<u16>() {
+                let value = match arguments[0].parse::<u16>() {
                     Ok(v) => v as u64,
-                    Err(_) => match u16::from_str_radix(trimmed, 16) {
-                        Ok(v) => v as u64,
-                        Err(_) => calculate_label_id(trimmed),
+                    Err(_) => {
+                        let trimmed = arguments[1].trim_start_matches("0x");
+                        match u16::from_str_radix(trimmed, 16) {
+                            Ok(v) => v as u64,
+                            Err(_) => calculate_label_id(trimmed),
+                        }
                     },
                 };
                 Token::Ldl(reg_name_to_num(arguments[0]), value)
@@ -304,12 +355,12 @@ impl Job {
         };
     }
 
-    fn gen_directive_token(&mut self, directive: &str, arguments: &str) -> Token {
+    fn gen_directive_token(&mut self, directive: &String, arguments: &String) -> Token {
         let directive = match directive.strip_prefix('.') {
             Some(str) => str,
             None => critical!("Failed to remove semicolon from label (`{}`).", directive),
         };
-        let arguments = arguments.trim().split(',').collect::<Vec<&str>>();
+        let arguments = arguments.split(',').collect::<Vec<&str>>();
         let assert_args_len_eq = |len| -> () {
             let arglen = arguments.len();
             if arglen > len {
@@ -327,15 +378,46 @@ impl Job {
         return match directive {
             "short" => {
                 assert_args_len_eq(1);
-                let short = parse_int_from_string(arguments[0]);
+                let mut is_label = false;
+                let trimmed = arguments[0].trim_start_matches("0x");
+                let short = match trimmed.parse::<u16>() {
+                    Ok(v) => v as u64,
+                    Err(_) => match u16::from_str_radix(trimmed, 16) {
+                        Ok(v) => v as u64,
+                        Err(_) => {
+                            is_label = true;
+                            calculate_label_id(trimmed)
+                        },
+                    },
+                };
                 self.address += 2;
-                Token::Short(short)
+                Token::Short(short, is_label)
+            }
+            "addr" => {
+                assert_args_len_eq(1);
+                let address = match arguments[0].parse::<u16>() {
+                    Ok(v) => v as u64,
+                    Err(_) => {
+                        let trimmed = arguments[0].trim_start_matches("0x");
+                        match u16::from_str_radix(trimmed, 16) {
+                            Ok(v) => v as u64,
+                            Err(_) => critical!("Invalid address `{}`", trimmed),
+                        }
+                    }
+                };
+                if address % 2 != 0 {
+                    critical!("Address {:0>4X} is not 2 byte aligned.", address);
+                } else if address > u16::MAX as u64 {
+                    critical!("Address {:0>4X} is higher than the maximum allowed.", address);
+                }
+                self.address = address;
+                Token::Addr(address as u16)
             }
             _ => critical!("Invalid directive `.{}`.", directive),
         };
     }
 
-    fn gen_label_token(&mut self, line: &str) -> Token {
+    fn gen_label_token(&mut self, line: &String) -> Token {
         let label = match line.strip_suffix(':') {
             Some(str) => str,
             None => critical!("Failed to remove semicolon from label (`{}`).", line),
@@ -371,6 +453,7 @@ fn parse_int_from_string<F: std::str::FromStr>(string: &str) -> F {
 }
 
 fn reg_name_to_num(name: &str) -> u16 {
+    let name = name.trim();
     if name == "sp" {
         return 0x0A;
     } else if name.starts_with("r") || name.starts_with('c') {

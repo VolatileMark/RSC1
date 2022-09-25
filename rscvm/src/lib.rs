@@ -68,6 +68,7 @@ impl Configuration {
         println!(" iPC={}", self.initial_pc);
         println!(" MEM={}", self.memory_size);
         println!(" FWF={}", self.firmware_file);
+        println!();
     }
 }
 
@@ -218,7 +219,11 @@ impl VirtualMachine {
             if delta >= delta_ceil {
                 match self.step() {
                     Ok(s) => self.regs.pc += s,
-                    Err(_) => {}
+                    Err(e) => match e {
+                        Exception::IOP => self.regs.fg |= 1 << 15,
+                        Exception::SEG => self.regs.fg |= 1 << 14,
+                        Exception::UNA => self.regs.fg |= 1 << 13,
+                    }
                 }
                 delta -= delta_ceil;
                 if delta >= delta_ceil {
