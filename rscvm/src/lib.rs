@@ -36,9 +36,10 @@ enum Instruction {
 }
 
 #[derive(ToPrimitive)]
-enum RegisterId {
+pub enum RegisterId {
     R7 = 0x07,
     SP = 0x08,
+    C0 = 0x09,
     C1 = 0x0A,
 }
 
@@ -292,13 +293,21 @@ impl VirtualMachine {
                         if !check_register_range(x, RegisterId::SP) {
                             return Err(Exception::IOP);
                         }
-                        self.regs.r[x as usize] += 1;
+                        if check_register_range(x, RegisterId::R7) {
+                            self.regs.r[x as usize] += 1;
+                        } else {
+                            self.regs.sp += 1;
+                        }
                     }
                     Instruction::DEC => {
                         if !check_register_range(x, RegisterId::SP) {
                             return Err(Exception::IOP);
                         }
-                        self.regs.r[x as usize] -= 1;
+                        if check_register_range(x, RegisterId::R7) {
+                            self.regs.r[x as usize] -= 1;
+                        } else {
+                            self.regs.sp -= 1;
+                        }
                     }
                     Instruction::LDB => {
                         if !check_register_range(x, RegisterId::R7)
@@ -306,7 +315,11 @@ impl VirtualMachine {
                         {
                             return Err(Exception::IOP);
                         }
-                        let address = self.regs.r[y as usize];
+                        let address = if check_register_range(y, RegisterId::R7) {
+                            self.regs.r[y as usize]
+                        } else {
+                            self.regs.sp
+                        };
                         if address >= self.mem.size {
                             return Err(Exception::SEG);
                         }
@@ -319,7 +332,11 @@ impl VirtualMachine {
                         {
                             return Err(Exception::IOP);
                         }
-                        let address = self.regs.r[y as usize];
+                        let address = if check_register_range(y, RegisterId::R7) {
+                            self.regs.r[y as usize]
+                        } else {
+                            self.regs.sp
+                        };
                         if address >= self.mem.size - 1 {
                             return Err(Exception::SEG);
                         }
@@ -333,7 +350,25 @@ impl VirtualMachine {
                         {
                             return Err(Exception::IOP);
                         }
-                        self.regs.r[x as usize] = self.regs.r[y as usize];
+                        let reg_y = if !check_register_range(y, RegisterId::R7) {
+                            if check_register_range(y, RegisterId::SP) {
+                                self.regs.sp
+                            } else {
+                                self.regs.c[(y - RegisterId::C0 as u16) as usize]
+                            }
+                        } else {
+                            self.regs.r[y as usize]
+                        };
+                        let reg_x = if !check_register_range(x, RegisterId::R7) {
+                            if check_register_range(x, RegisterId::SP) {
+                                &mut self.regs.sp
+                            } else {
+                                &mut self.regs.c[(x - RegisterId::C0 as u16) as usize]
+                            }
+                        } else {
+                            &mut self.regs.r[x as usize]
+                        };
+                        *reg_x = reg_y;
                     }
                     Instruction::LDI => {
                         if !check_register_range(x, RegisterId::R7) {
@@ -347,7 +382,11 @@ impl VirtualMachine {
                         {
                             return Err(Exception::IOP);
                         }
-                        let address = self.regs.r[x as usize];
+                        let address = if check_register_range(x, RegisterId::R7) {
+                            self.regs.r[x as usize]
+                        } else {
+                            self.regs.sp
+                        };
                         if address >= self.mem.size {
                             return Err(Exception::SEG);
                         }
@@ -359,7 +398,11 @@ impl VirtualMachine {
                         {
                             return Err(Exception::IOP);
                         }
-                        let address = self.regs.r[x as usize];
+                        let address = if check_register_range(x, RegisterId::R7) {
+                            self.regs.r[x as usize]
+                        } else {
+                            self.regs.sp
+                        };
                         if address >= self.mem.size - 1 {
                             return Err(Exception::SEG);
                         }
@@ -375,6 +418,7 @@ impl VirtualMachine {
                             return Err(Exception::UNA);
                         }
                         self.regs.pc = address;
+                        return Ok(0);
                     }
                     Instruction::JNZ => {
                         if !check_register_range(x, RegisterId::SP)
@@ -388,6 +432,7 @@ impl VirtualMachine {
                         }
                         if self.regs.r[y as usize] == 0 {
                             self.regs.pc = address;
+                            return Ok(0);
                         }
                     }
                     Instruction::SHR => {

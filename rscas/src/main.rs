@@ -1,14 +1,6 @@
-use num_derive::ToPrimitive;
 use num_traits::ToPrimitive;
-use rscas::{critical, Job, Token, Executable};
+use rscas::{critical, Job, Token, Executable, RegisterId};
 use std::{collections::HashMap, env, time::Instant};
-
-#[derive(ToPrimitive)]
-enum RegisterId {
-    R7 = 0x07,
-    SP = 0x08,
-    C1 = 0x0A,
-}
 
 fn parse_args() -> Job {
     let mut job = Job::new();
@@ -167,13 +159,15 @@ fn gen_executable(tokens: &Vec<Token>) -> Executable {
                 Token::Clrf(n) => exec.push_short(0x8002 | (((n & 0x0F) as u16) << 8)),
                 Token::Push(x) => {
                     check_x(x, RegisterId::R7);
-                    exec.push_short(0x2802);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x2803);
                     exec.push_short(0x5801 | (x << 4));
                 }
                 Token::Pop(x) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x3081 | (x << 8));
-                    exec.push_short(0x2803);
+                    exec.push_short(0x2802);
+                    exec.push_short(0x2802);
                 }
                 Token::Ldl(x, k) => {
                     let a = match labels.get(&k) {
@@ -184,7 +178,34 @@ fn gen_executable(tokens: &Vec<Token>) -> Executable {
                     exec.push_short(0x7081 | (x << 8));
                     exec.push_short(0x4000 | (x << 8) | (a & 0x00FF));
                 }
-                _ => {}
+                Token::Call(x, a) => {
+                    check_x(x, RegisterId::R7);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x5801 | (x << 4));
+                    exec.push_short(0x2802);
+                    exec.push_short(0x2802);
+                    exec.push_short(0x4000 | (x << 8) | ((a & 0xFF00) >> 8));
+                    exec.push_short(0x7081 | (x << 8));
+                    exec.push_short(0x4000 | (x << 8) | (a & 0x00FF));
+                    exec.push_short(0x5801 | (x << 4));
+                    exec.push_short(0x2803);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x3081 | (x << 8));
+                    exec.push_short(0x2802);
+                    exec.push_short(0x2802);
+                    exec.push_short(0x6000 | (x << 8));
+                }
+                Token::Ret(x) => {
+                    check_x(x, RegisterId::R7);
+                    exec.push_short(0x3081 | (x << 8));
+                    exec.push_short(0x2802);
+                    exec.push_short(0x2802);
+                    exec.push_short(0x6000 | (x << 8));
+                }
+                Token::Label(_, _) => {}
             };
         }
     }

@@ -1,3 +1,4 @@
+use num_derive::ToPrimitive;
 use std::{fs, path::PathBuf, str::FromStr};
 
 const TRAMPOLINE_SIZE: u64 = 4 * 2;
@@ -10,6 +11,14 @@ macro_rules! critical {
             std::process::exit(-1);
         }
     };
+}
+
+#[derive(ToPrimitive)]
+pub enum RegisterId {
+    R7 = 0x07,
+    SP = 0x08,
+    C0 = 0x09,
+    C1 = 0x0A,
 }
 
 pub enum Token {
@@ -43,6 +52,8 @@ pub enum Token {
     Push(u16),
     Pop(u16),
     Ldl(u16, u64),
+    Call(u16, u16),
+    Ret(u16),
 }
 
 pub struct Executable {
@@ -328,17 +339,17 @@ impl Job {
         return match instruction.as_str() {
             "push" => {
                 assert_args_len_eq(1);
-                self.address += 2;
+                self.address += 2 * 3 - 2;
                 Token::Push(reg_name_to_num(arguments[0]))
             }
             "pop" => {
                 assert_args_len_eq(1);
-                self.address += 2;
+                self.address += 2 * 3 - 2;
                 Token::Pop(reg_name_to_num(arguments[0]))
             }
             "ldl" => {
                 assert_args_len_eq(2);
-                self.address += 4;
+                self.address += 2 * 3 - 2;
                 let value = match arguments[0].parse::<u16>() {
                     Ok(v) => v as u64,
                     Err(_) => {
@@ -350,6 +361,16 @@ impl Job {
                     },
                 };
                 Token::Ldl(reg_name_to_num(arguments[0]), value)
+            }
+            "call" => {
+                assert_args_len_eq(1);
+                self.address += 2 * 17 - 2;
+                Token::Call(reg_name_to_num(arguments[0]), self.address as u16)
+            }
+            "ret" => {
+                assert_args_len_eq(1);
+                self.address += 2 * 4 - 2;
+                Token::Ret(reg_name_to_num(arguments[0]))
             }
             _ => critical!("Invalid instruction `{}`.", instruction),
         };
@@ -455,15 +476,20 @@ fn parse_int_from_string<F: std::str::FromStr>(string: &str) -> F {
 fn reg_name_to_num(name: &str) -> u16 {
     let name = name.trim();
     if name == "sp" {
-        return 0x0A;
-    } else if name.starts_with("r") || name.starts_with('c') {
-        return match name.get(1..2) {
-            Some(num) => parse_int_from_string(num),
-            None => critical!(
-                "Failed to obtain register number (input string was `{}`).",
-                name
-            ),
-        };
+        return RegisterId::SP as u16;
+    } 
+    let num = match name.get(1..2) {
+        Some(num) => parse_int_from_string(num),
+        None => critical!(
+            "Failed to obtain register number (input string was `{}`).",
+            name
+        ),
+    };
+    if name.starts_with("r") {
+        return num;
+    }
+    if name.starts_with('c') {
+        return num + RegisterId::C0 as u16;
     }
     critical!("Invalid register `{}`.", name)
 }
