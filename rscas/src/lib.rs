@@ -65,7 +65,7 @@ impl Executable {
     pub fn new() -> Self {
         return Self {
             bytes: Vec::new(),
-            address: 0
+            address: 0,
         };
     }
 
@@ -321,7 +321,11 @@ impl Job {
         };
     }
 
-    fn gen_pseudo_instruction_token(&mut self, instruction: &String, arguments: &Vec<&str>) -> Token {
+    fn gen_pseudo_instruction_token(
+        &mut self,
+        instruction: &String,
+        arguments: &Vec<&str>,
+    ) -> Token {
         let assert_args_len_eq = |len| -> () {
             let arglen = arguments.len();
             if arglen > len {
@@ -358,7 +362,7 @@ impl Job {
                             Ok(v) => v as u64,
                             Err(_) => calculate_label_id(trimmed),
                         }
-                    },
+                    }
                 };
                 Token::Ldl(reg_name_to_num(arguments[0]), value)
             }
@@ -408,7 +412,7 @@ impl Job {
                         Err(_) => {
                             is_label = true;
                             calculate_label_id(trimmed)
-                        },
+                        }
                     },
                 };
                 self.address += 2;
@@ -429,7 +433,10 @@ impl Job {
                 if address % 2 != 0 {
                     critical!("Address {:0>4X} is not 2 byte aligned.", address);
                 } else if address > u16::MAX as u64 {
-                    critical!("Address {:0>4X} is higher than the maximum allowed.", address);
+                    critical!(
+                        "Address {:0>4X} is higher than the maximum allowed.",
+                        address
+                    );
                 }
                 self.address = address;
                 Token::Addr(address as u16)
@@ -477,7 +484,7 @@ fn reg_name_to_num(name: &str) -> u16 {
     let name = name.trim();
     if name == "sp" {
         return RegisterId::SP as u16;
-    } 
+    }
     let num = match name.get(1..2) {
         Some(num) => parse_int_from_string(num),
         None => critical!(

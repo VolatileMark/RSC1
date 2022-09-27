@@ -102,20 +102,10 @@ impl Firmware {
     pub fn default() -> Self {
         let default = vec![
             // Move 0xDEAD into r0
-            0xDE, 0x40, 
-            0x81, 0x70, 
-            0xAD, 0x40, 
-            // Move 0xBEEF into r1
-            0xBE, 0x41, 
-            0x81, 0x71, 
-            0xEF, 0x41, 
-            // Load no-op address
-            0x00, 0x42, 
-            0x81, 0x72, 
-            0x12, 0x42, 
-            // No-op
-            0x00, 0x00, 
-            // Jump to no-op
+            0xDE, 0x40, 0x81, 0x70, 0xAD, 0x40, // Move 0xBEEF into r1
+            0xBE, 0x41, 0x81, 0x71, 0xEF, 0x41, // Load no-op address
+            0x00, 0x42, 0x81, 0x72, 0x12, 0x42, // No-op
+            0x00, 0x00, // Jump to no-op
             0x00, 0x62,
         ];
         return Self {
@@ -224,7 +214,7 @@ impl VirtualMachine {
                         Exception::IOP => self.regs.fg |= 1 << 15,
                         Exception::SEG => self.regs.fg |= 1 << 14,
                         Exception::UNA => self.regs.fg |= 1 << 13,
-                    }
+                    },
                 }
                 delta -= delta_ceil;
                 if delta >= delta_ceil {
