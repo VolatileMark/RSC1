@@ -1,4 +1,4 @@
-use rscvm::{Configuration, VirtualMachine};
+use svirt::{Configuration, VirtualMachine};
 use std::env;
 use std::sync::atomic::Ordering;
 

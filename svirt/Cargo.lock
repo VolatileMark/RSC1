@@ -87,7 +87,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rscvm"
+name = "svirt"
 version = "0.1.0"
 dependencies = [
  "ctrlc",

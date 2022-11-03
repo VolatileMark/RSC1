@@ -1,5 +1,5 @@
 use num_traits::ToPrimitive;
-use rscas::{critical, Executable, Job, RegisterId, Token};
+use sasm::{critical, Executable, Job, RegisterId, Token};
 use std::{collections::HashMap, env, time::Instant};
 
 fn parse_args() -> Job {
