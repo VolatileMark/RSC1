@@ -23,37 +23,38 @@ pub enum RegisterId {
 
 pub enum Token {
     // Literals
-    Label(u64, u16),
+    LABEL(u64, u16),
     // Assembler directives
-    Short(u64, bool),
-    Addr(u16),
+    SHORT(u64, bool),
+    ADDR(u16),
     // Instructions
-    Nop,
-    And(u16, u16),
-    Not(u16),
-    Add(u16, u16),
-    Sub(u16, u16),
-    Inc(u16),
-    Dec(u16),
-    Ldb(u16, u16),
-    Ldw(u16, u16),
-    Mov(u16, u16),
-    Ldi(u16, u8),
-    Stb(u16, u16),
-    Stw(u16, u16),
-    Jmp(u16),
-    Jnz(u16, u16),
-    Shr(u16, u8),
-    Shl(u16, u8),
-    Test(u8),
-    Setf(u8),
-    Clrf(u8),
+    NOP,
+    AND(u16, u16),
+    NOT(u16),
+    ADD(u16, u16),
+    SUB(u16, u16),
+    INC(u16),
+    DEC(u16),
+    LDB(u16, u16),
+    LDW(u16, u16),
+    MOV(u16, u16),
+    LDI(u16, u8),
+    STB(u16, u16),
+    STW(u16, u16),
+    JMP(u16),
+    JNZ(u16, u16),
+    SHR(u16, u8),
+    SHL(u16, u8),
+    TEST(u8),
+    SETF(u8),
+    CLRF(u8),
     // Assembler pseudo instructions
-    Push(u16),
-    Pop(u16),
-    Ldl(u16, u64),
-    Call(u16, u16),
-    Ret(u16),
+    PUSH(u16),
+    POP(u16),
+    LDL(u16, u64),
+    CALL(u16, u16),
+    CALLF(u16, u16, u16),
+    RET(u16),
 }
 
 pub struct Executable {
@@ -175,8 +176,8 @@ impl Job {
         }
         if self.trampoline {
             let id = calculate_label_id(self.entry.as_str());
-            tokens.insert(0, Token::Ldl(0, id));
-            tokens.insert(1, Token::Jmp(0));
+            tokens.insert(0, Token::LDL(0, id));
+            tokens.insert(1, Token::JMP(0));
         }
         return tokens;
     }
@@ -230,92 +231,92 @@ impl Job {
         return match instruction.as_str() {
             "nop" => {
                 assert_args_len_eq(0);
-                Token::Nop
+                Token::NOP
             }
             "and" => {
                 assert_args_len_eq(2);
-                Token::And(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::AND(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "not" => {
                 assert_args_len_eq(1);
-                Token::Not(reg_name_to_num(arguments[0]))
+                Token::NOT(reg_name_to_num(arguments[0]))
             }
             "add" => {
                 assert_args_len_eq(2);
-                Token::Add(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::ADD(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "sub" => {
                 assert_args_len_eq(2);
-                Token::Sub(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::SUB(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "inc" => {
                 assert_args_len_eq(1);
-                Token::Inc(reg_name_to_num(arguments[0]))
+                Token::INC(reg_name_to_num(arguments[0]))
             }
             "dec" => {
                 assert_args_len_eq(1);
-                Token::Dec(reg_name_to_num(arguments[0]))
+                Token::DEC(reg_name_to_num(arguments[0]))
             }
             "ldb" => {
                 assert_args_len_eq(2);
-                Token::Ldb(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::LDB(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "ldw" => {
                 assert_args_len_eq(2);
-                Token::Ldw(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::LDW(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "mov" => {
                 assert_args_len_eq(2);
-                Token::Mov(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::MOV(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "ldi" => {
                 assert_args_len_eq(2);
-                Token::Ldi(
+                Token::LDI(
                     reg_name_to_num(arguments[0]),
                     parse_int_from_string(arguments[1]),
                 )
             }
             "stb" => {
                 assert_args_len_eq(2);
-                Token::Stb(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::STB(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "stw" => {
                 assert_args_len_eq(2);
-                Token::Stw(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::STW(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "jmp" => {
                 assert_args_len_eq(1);
-                Token::Jmp(reg_name_to_num(arguments[0]))
+                Token::JMP(reg_name_to_num(arguments[0]))
             }
             "jnz" => {
                 assert_args_len_eq(2);
-                Token::Jnz(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
+                Token::JNZ(reg_name_to_num(arguments[0]), reg_name_to_num(arguments[1]))
             }
             "shr" => {
                 assert_args_len_eq(2);
-                Token::Shr(
+                Token::SHR(
                     reg_name_to_num(arguments[0]),
                     parse_int_from_string(arguments[1]),
                 )
             }
             "shl" => {
                 assert_args_len_eq(2);
-                Token::Shl(
+                Token::SHL(
                     reg_name_to_num(arguments[0]),
                     parse_int_from_string(arguments[1]),
                 )
             }
             "test" => {
                 assert_args_len_eq(1);
-                Token::Test(parse_int_from_string(arguments[0]))
+                Token::TEST(parse_int_from_string(arguments[0]))
             }
             "setf" => {
                 assert_args_len_eq(1);
-                Token::Setf(parse_int_from_string(arguments[0]))
+                Token::SETF(parse_int_from_string(arguments[0]))
             }
             "clrf" => {
                 assert_args_len_eq(1);
-                Token::Clrf(parse_int_from_string(arguments[0]))
+                Token::CLRF(parse_int_from_string(arguments[0]))
             }
             _ => self.gen_pseudo_instruction_token(instruction, &arguments),
         };
@@ -344,12 +345,12 @@ impl Job {
             "push" => {
                 assert_args_len_eq(1);
                 self.address += 2 * 3 - 2;
-                Token::Push(reg_name_to_num(arguments[0]))
+                Token::PUSH(reg_name_to_num(arguments[0]))
             }
             "pop" => {
                 assert_args_len_eq(1);
                 self.address += 2 * 3 - 2;
-                Token::Pop(reg_name_to_num(arguments[0]))
+                Token::POP(reg_name_to_num(arguments[0]))
             }
             "ldl" => {
                 assert_args_len_eq(2);
@@ -364,17 +365,26 @@ impl Job {
                         }
                     }
                 };
-                Token::Ldl(reg_name_to_num(arguments[0]), value)
+                Token::LDL(reg_name_to_num(arguments[0]), value)
             }
             "call" => {
                 assert_args_len_eq(1);
                 self.address += 2 * 17 - 2;
-                Token::Call(reg_name_to_num(arguments[0]), self.address as u16)
+                Token::CALL(reg_name_to_num(arguments[0]), self.address as u16)
+            }
+            "callf" => {
+                assert_args_len_eq(2);
+                self.address += 2 * 7 - 2;
+                Token::CALLF(
+                    reg_name_to_num(arguments[0]),
+                    reg_name_to_num(arguments[1]),
+                    self.address as u16,
+                )
             }
             "ret" => {
                 assert_args_len_eq(1);
                 self.address += 2 * 4 - 2;
-                Token::Ret(reg_name_to_num(arguments[0]))
+                Token::RET(reg_name_to_num(arguments[0]))
             }
             _ => critical!("Invalid instruction `{}`.", instruction),
         };
@@ -416,7 +426,7 @@ impl Job {
                     },
                 };
                 self.address += 2;
-                Token::Short(short, is_label)
+                Token::SHORT(short, is_label)
             }
             "addr" => {
                 assert_args_len_eq(1);
@@ -439,7 +449,7 @@ impl Job {
                     );
                 }
                 self.address = address;
-                Token::Addr(address as u16)
+                Token::ADDR(address as u16)
             }
             _ => critical!("Invalid directive `.{}`.", directive),
         };
@@ -454,7 +464,7 @@ impl Job {
             self.address -= TRAMPOLINE_SIZE;
             self.trampoline = false;
         }
-        return Token::Label(calculate_label_id(label), self.address as u16);
+        return Token::LABEL(calculate_label_id(label), self.address as u16);
     }
 }
 

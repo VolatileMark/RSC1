@@ -33,7 +33,7 @@ fn collect_labels(tokens: &Vec<Token>) -> HashMap<u64, u16> {
     let mut labels = HashMap::new();
     for token in tokens.iter() {
         match token {
-            Token::Label(id, address) => {
+            Token::LABEL(id, address) => {
                 if labels.contains_key(id) {
                     critical!("Duplicate label `{:0>16X}`", *id);
                 }
@@ -69,7 +69,7 @@ fn gen_executable(tokens: &Vec<Token>) -> Executable {
         };
         if let Some(token) = tokens_iter.next() {
             match *token {
-                Token::Short(s, l) => {
+                Token::SHORT(s, l) => {
                     if l {
                         match labels.get(&s) {
                             Some(v) => exec.push_short(*v),
@@ -79,97 +79,97 @@ fn gen_executable(tokens: &Vec<Token>) -> Executable {
                         exec.push_short(s as u16);
                     }
                 }
-                Token::Addr(a) => exec.set_address(a),
-                Token::Nop => exec.push_short(0x0000),
-                Token::And(x, y) => {
+                Token::ADDR(a) => exec.set_address(a),
+                Token::NOP => exec.push_short(0x0000),
+                Token::AND(x, y) => {
                     check_x(x, RegisterId::R7);
                     check_y(y, RegisterId::R7);
                     exec.push_short(0x1000 | (x << 8) | (y << 4));
                 }
-                Token::Not(x) => {
+                Token::NOT(x) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x1001 | (x << 8));
                 }
-                Token::Add(x, y) => {
+                Token::ADD(x, y) => {
                     check_x(x, RegisterId::R7);
                     check_y(y, RegisterId::R7);
                     exec.push_short(0x2000 | (x << 8) | (y << 4));
                 }
-                Token::Sub(x, y) => {
+                Token::SUB(x, y) => {
                     check_x(x, RegisterId::R7);
                     check_y(y, RegisterId::R7);
                     exec.push_short(0x2001 | (x << 8) | (y << 4));
                 }
-                Token::Inc(x) => {
+                Token::INC(x) => {
                     check_x(x, RegisterId::SP);
                     exec.push_short(0x2002 | (x << 8));
                 }
-                Token::Dec(x) => {
+                Token::DEC(x) => {
                     check_x(x, RegisterId::SP);
                     exec.push_short(0x2003 | (x << 8));
                 }
-                Token::Ldb(x, y) => {
+                Token::LDB(x, y) => {
                     check_x(x, RegisterId::R7);
                     check_y(y, RegisterId::SP);
                     exec.push_short(0x3000 | (x << 8) | (y << 4));
                 }
-                Token::Ldw(x, y) => {
+                Token::LDW(x, y) => {
                     check_x(x, RegisterId::R7);
                     check_y(y, RegisterId::SP);
                     exec.push_short(0x3001 | (x << 8) | (y << 4));
                 }
-                Token::Mov(x, y) => {
+                Token::MOV(x, y) => {
                     check_x(x, RegisterId::C1);
                     check_y(y, RegisterId::C1);
                     exec.push_short(0x3002 | (x << 8) | (y << 4));
                 }
-                Token::Ldi(x, nn) => {
+                Token::LDI(x, nn) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x4000 | (x << 8) | (nn as u16));
                 }
-                Token::Stb(y, x) => {
+                Token::STB(y, x) => {
                     check_y(y, RegisterId::SP);
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x5000 | (y << 8) | (x << 4));
                 }
-                Token::Stw(y, x) => {
+                Token::STW(y, x) => {
                     check_y(y, RegisterId::SP);
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x5001 | (y << 8) | (x << 4));
                 }
-                Token::Jmp(x) => {
+                Token::JMP(x) => {
                     check_x(x, RegisterId::SP);
                     exec.push_short(0x6000 | (x << 8));
                 }
-                Token::Jnz(x, y) => {
+                Token::JNZ(x, y) => {
                     check_x(x, RegisterId::SP);
                     check_y(y, RegisterId::R7);
                     exec.push_short(0x6001 | (x << 8) | (y << 4));
                 }
-                Token::Shr(x, n) => {
+                Token::SHR(x, n) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x7000 | (x << 8) | (((n & 0x0F) as u16) << 4));
                 }
-                Token::Shl(x, n) => {
+                Token::SHL(x, n) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x7001 | (x << 8) | (((n & 0x0F) as u16) << 4));
                 }
-                Token::Test(n) => exec.push_short(0x8000 | (((n & 0x0F) as u16) << 8)),
-                Token::Setf(n) => exec.push_short(0x8001 | (((n & 0x0F) as u16) << 8)),
-                Token::Clrf(n) => exec.push_short(0x8002 | (((n & 0x0F) as u16) << 8)),
-                Token::Push(x) => {
+                Token::TEST(n) => exec.push_short(0x8000 | (((n & 0x0F) as u16) << 8)),
+                Token::SETF(n) => exec.push_short(0x8001 | (((n & 0x0F) as u16) << 8)),
+                Token::CLRF(n) => exec.push_short(0x8002 | (((n & 0x0F) as u16) << 8)),
+                Token::PUSH(x) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x2803);
                     exec.push_short(0x2803);
                     exec.push_short(0x5801 | (x << 4));
                 }
-                Token::Pop(x) => {
+                Token::POP(x) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x3081 | (x << 8));
                     exec.push_short(0x2802);
                     exec.push_short(0x2802);
                 }
-                Token::Ldl(x, k) => {
+                Token::LDL(x, k) => {
                     let a = match labels.get(&k) {
                         Some(a) => *a,
                         None => k as u16,
@@ -178,7 +178,7 @@ fn gen_executable(tokens: &Vec<Token>) -> Executable {
                     exec.push_short(0x7081 | (x << 8));
                     exec.push_short(0x4000 | (x << 8) | (a & 0x00FF));
                 }
-                Token::Call(x, a) => {
+                Token::CALL(x, a) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x2803);
                     exec.push_short(0x2803);
@@ -198,14 +198,31 @@ fn gen_executable(tokens: &Vec<Token>) -> Executable {
                     exec.push_short(0x2802);
                     exec.push_short(0x6000 | (x << 8));
                 }
-                Token::Ret(x) => {
+                Token::CALLF(x, y, a) => {
+                    check_x(x, RegisterId::SP);
+                    check_y(y, RegisterId::R7);
+                    if x == y {
+                        critical!("CALLF: register X cannot be the same as register Y");
+                    }
+                    // LDL
+                    exec.push_short(0x4000 | (y << 8) | ((a & 0xFF00) >> 8));
+                    exec.push_short(0x7081 | (y << 8));
+                    exec.push_short(0x4000 | (y << 8) | (a & 0x00FF));
+                    // PUSH Y
+                    exec.push_short(0x2803);
+                    exec.push_short(0x2803);
+                    exec.push_short(0x5801 | (y << 4));
+                    // JMP X
+                    exec.push_short(0x6000 | (x << 8));
+                }
+                Token::RET(x) => {
                     check_x(x, RegisterId::R7);
                     exec.push_short(0x3081 | (x << 8));
                     exec.push_short(0x2802);
                     exec.push_short(0x2802);
                     exec.push_short(0x6000 | (x << 8));
                 }
-                Token::Label(_, _) => {}
+                Token::LABEL(_, _) => {}
             };
         }
     }

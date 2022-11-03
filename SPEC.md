@@ -57,15 +57,16 @@ The system stores values in the **little endian format**.
 |                    |           |              | STW sp, X     |
 |                    |           |              | INC sp        |
 |                    |           |              | INC sp        |
-|                    |           |              | LDI  X, h$+16 |
-|                    |           |              | SHL  X, 8     |
-|                    |           |              | LDI  X, l$+12 |
+|                    |           |              | LDL  X, $+16  |
 |                    |           |              | STW sp, X     |
 |                    |           |              | DEC sp        |
 |                    |           |              | DEC sp        |
 |                    |           |              | LDW  X, sp    |
 |                    |           |              | INC sp        |
 |                    |           |              | INC sp        |
+|                    |           |              | JMP  X        |
+| CALLF              | X, Y      | r0-sp, r0-r7 | LDL  Y, $+6   |
+|                    |           |              | PUSH Y        |
 |                    |           |              | JMP  X        |
 | RET                | X, --     | r0-r7, --    | LDW  X, sp    |
 |                    |           |              | INC sp        |
