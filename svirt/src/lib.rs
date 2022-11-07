@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+pub mod machine;
+
 enum Exception {
     IOP,
     SEG,
@@ -210,11 +212,18 @@ impl VirtualMachine {
             if delta >= delta_ceil {
                 match self.step() {
                     Ok(s) => self.regs.pc += s,
-                    Err(e) => match e {
-                        Exception::IOP => self.regs.fg |= 1 << 15,
-                        Exception::SEG => self.regs.fg |= 1 << 14,
-                        Exception::UNA => self.regs.fg |= 1 << 13,
-                    },
+                    Err(e) => {
+                        match e {
+                            Exception::IOP => self.regs.fg |= 1 << 15,
+                            Exception::SEG => self.regs.fg |= 1 << 14,
+                            Exception::UNA => self.regs.fg |= 1 << 13,
+                        }
+                        self.regs.sp -= 1;
+                        self.mem.data[self.regs.sp as usize] = ((self.regs.pc & 0xFF00) >> 8) as u8;
+                        self.regs.sp -= 1;
+                        self.mem.data[self.regs.sp as usize] = (self.regs.pc & 0x00FF) as u8;
+                        self.regs.pc = self.regs.c[1];
+                    }
                 }
                 delta -= delta_ceil;
                 if delta >= delta_ceil {
