@@ -1,4 +1,4 @@
-# RC1 ISA
+# RSC1 Instruction Set
 
 ## System properties
 
